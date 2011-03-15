@@ -1,0 +1,301 @@
+Grails Pres
+
+1. Intro & History
+- Convention over Configuration, hides most configuration details from the developer with ability to override if needed (no XML)
+- High productivity
+- Built on top of Spring, and Hibernate for ORM (also NoSQL plugins without Hibernate)
+- Built on Groovy
+- Previously known as Groovy on Rails, name was dropped after request from Ruby on Rails founder
+- Was started in 2005, first release in 2006, v1 was in 2008
+- Acquired by SpringSource in 2008
+
+- Grails features dynamic methods on several classes through mixins. A mixin is a method which is added to a class dynamically as if the functionality was compiled in the program.
+- Decent IDE Support: Intellij: very good support, Eclipse: should be good with STS, Netbeans
+- Decent documentation: http://grails.org/doc/latest/guide/
+
+2. Command line
+*- grails create-app beers
+- common commands:
+	- help <command>
+	- create-* (app, controller, domain-class, service, etc.)
+	- clean
+	- install-plugin
+	- run-app
+	- test-app
+	- upgrade
+	- war
+	
+3. Intellij Project
+*- setup project based on existing sources
+- directory structure:
+	- grails-app: Grails specific code
+		- conf: configuration groovy scripts
+		- controllers
+		- domain: GORM 
+		- i18n: internatalization, message bundles
+		- services
+		- taglib
+		- utils: Codecs only
+		- views: GSP
+	- lib: libraries referenced, but best to use the dependency management
+	- scripts: custom command line scripts, custom build scripts using gant
+	- src: non-grails specific code - including an java if required
+	- test: unit and integration tests
+	- web-app: standard Java web application directory structure
+
+4. Configuration
+- Quick overview
+- resources.groovy: Spring bean config
+- Bootstrap.groovy: app startup/shutdown code
+- BuildConfig.groovy: dependency management, etc. (show how to add new library dependency)
+- Config.groovy: general config for grails, plugins
+- DataSource.groovy: DB setup
+- UrlMappings: map URLs to contorllers/views
+*- add log to bootstrap: log.info('startin the beers')
+*- configure logs in config.groovy: info 'grails.app'
+*- startup grails app
+
+5. GORM
+- Grails wraps Hibernate with default configuration for hibernate domain objects
+- Can do pretty much anything that hibernate supports, some specialized features are tougher
+- Fallback is to do classic hibernate mappings 
+*- create a BeerCompany domain class with following components:
+	- String name, Long hops, Integer rating
+	- static hasMany = [ beers : Beer ]
+    - static constraints = {
+        name(size:1..30, blank:false, unique:true)
+        rating(range: 1..5, nullable: true)
+        hops(nullable: true)
+    }
+*- create a Beer domain class with following components:
+	- String name, Float alcoholVolume, String description
+	- static belongsTo = [ company : BeerCompany ]
+	- static mapping = { 
+        sort "name"
+        description column: 'desc'
+	}
+	- static constraints = { 
+		name(size:1..30, blank:false, unique:true) 
+		description(nullable: true)
+	}
+- 'id' field is created automatically with a sequence
+- defaults to notNull for all fields
+- creates a version column by default for locking
+- Querying data can be done a few ways: dynamic, criteria, and HQL
+*- setup some data in bootstrap:
+        if(!BeerCompany.list()) {
+            BeerCompany phillips = new BeerCompany(name: 'Phillips', hops: 800000)
+            phillips.save()
+            log.info("BeerCompany created: ${phillips.id}")
+
+            BeerCompany lighthouse = new BeerCompany(name: 'Lighthouse', hops: 500000)
+            lighthouse.save()
+            log.info("BeerCompany created: ${lighthouse.id}")
+
+            def beers = [
+                new Beer(name: 'Blue Buck', alcoholVolume: 5.0, description: 'good', company: phillips),
+                new Beer(name: 'Hop Circle IPA', alcoholVolume: 6.5, description: 'hoppy', company: phillips),
+                new Beer(name: 'Beacon IPA', alcoholVolume: 6.0, description: 'hoppy', company: lighthouse)
+            ]
+
+            beers.each {
+                it.save()
+                if(it.hasErrors()) {
+                    log.error(it.errors.allErrors*.toString())
+                }
+                log.info("${it.id}, ${it.name}, ${it.company.name}")
+            }
+
+            // id lookup
+            BeerCompany justAdded = BeerCompany.get(phillips.id)
+            log.info("BeerCompany lookup of ${phillips.id}: ${justAdded.name}")
+
+            // dynamic criteria
+            beers = Beer.findAllByCompany(justAdded)
+            log.info("Beers found: ${beers*.name}")
+
+            beers = Beer.findAllByAlcoholVolumeGreaterThan(5.1f)
+            log.info("Beers found: ${beers*.name}")
+
+            // criteria based
+            beers = Beer.withCriteria {
+                between('alcoholVolume', 6.0f, 6.5f)
+                eq('description', 'hoppy')
+                order("name", "asc")
+            }
+            log.info("Beers found: ${beers*.name}")
+        }
+
+6. Controllers/Scaffolding
+- Controllers handle requests, prepares response, and can delegate to a view
+- control application flow
+*- Create controller: beerapp.BeerController
+*- remove index closure, and add scaffold: static scaffold = Beer
+*- launch app
+*- Goto beer controller, add beer, with no name and incorrect number
+*- add beer: slipstream, 5.0
+*- Create controller: beerapp.BeerCompanyController
+*- Generate a view for BeerCompanyController (via the button in the controller editor view)
+*- add the following closure to BeerCompanyController:
+    def index = {
+        def beerCompanies = BeerCompany.list()
+        render(view: 'list', model: [beerCompanyInstanceList: beerCompanies, beerCompanyInstanceTotal: beerCompanies.size()])
+    }
+- when view the page notice the URL and how it corresponds to the closure names in the controller
+- Controllers can also be used to create APIs
+*- Create controller beerapp.api.BeerApiController
+- a couple ways to marshal JSON/XML
+*- put this into Beer domain:
+    Map toMap() {
+        return [
+                id: id,
+                name: name,
+                alcoholVolume: alcoholVolume,
+                description: description,
+                company: company.name
+        ]
+    }
+*- put this into BeerApiController (notice the difference between JSON conversion):
+    def fetch = {
+        if(params.id) {
+            def beer = Beer.get(params.getLong('id'))
+            render(beer as JSON)
+//            render(beer as XML)
+        }
+        else {
+            def beers = Beer.list()
+            render(beers*.toMap() as JSON)
+        }
+    }
+*- put this into the UrlMappings:
+        name beerApi: "/api/beers/$id?" (controller: "beerApi") {
+            action = [GET: "fetch"]
+        }
+
+
+7. Views
+- GSP - Grails view technology
+- Very similar to JSP, but Grails specific, adds some niceties
+- Has their own taglib support
+- Can also use JSP taglibs
+*- add to bottom of beerCompany/list.gsp
+        <g:link mapping="beerApi">JSON list of Beers</g:link>
+
+OPTIONAL:
+*- add to UrlMappings:
+        name beerCompanyApi: "/api/beer-companies/$id/beers" (controller: "beerApi") {
+            action = [GET: "fetchByBeerCompany"]
+        }
+*- add to BeerApiController:
+    def fetchByCompany = {
+        def company = BeerCompany.get(params.getLong('id'))
+        render(Beer.findAllByCompany(company) as JSON)
+    }
+*- modify beerCompany/list.gsp
+	<g:link mapping="beerCompanyApi" ...
+
+
+8. Services
+- Meant to house the majority of the application logic and promote code reuse
+- transactional by default
+*- create service: beerapp.BeerCompanyService
+*- add this method:
+    def saveCompany(BeerCompany company) {
+        if(company.hops) {
+            if(company.hops < 100000) {
+                company.rating = 1
+            }
+            else if(company.hops > 100000 && company.hops < 400000) {
+                company.rating = 2
+            }
+            else if(company.hops > 400000 && company.hops < 600000) {
+                company.rating = 3
+            }
+            else if(company.hops > 600000 && company.hops < 900000) {
+                company.rating = 4
+            }
+            else if(company.hops > 900000) {
+                company.rating = 5
+            }
+        }
+        return company.save()
+    }
+*- add to BeerCompanyController:
+    static scaffold = BeerCompany
+    def beerCompanyService
+
+    def save = {
+        BeerCompany company = new BeerCompany(params)
+        if(!beerCompanyService.saveCompany(company)) {
+            render(view: 'create', model: [beerCompanyInstance: company])
+            return
+        }
+        index()
+    }
+
+*- modify create.gsp and remove the rating field
+*- Through interface add BeerCompany: 
+	1. put an error in the hops field
+	2. Tree Brewing Co, 1000000
+- By default, access to service methods is not synchronised, so nothing prevents concurrent execution of those functions. 
+- the service is a singleton and may be used concurrently, you should avoid storing state in a service. 
+- If state needs to be tracked, Services can be scoped:
+	prototype - A new service is created every time it is injected into another class
+	request - A new service will be created per request
+	flash - A new service will be created for the current and next request only
+	flow - In web flows the service will exist for the scope of the flow
+	conversation - In web flows the service will exist for the scope of the conversation. ie a root flow and its sub flows
+	session - A service is created for the scope of a user session
+	singleton (default) - Only one instance of the service ever exists
+
+9. Plugins
+- There's a variety of plugins for Grails, some popular ones:
+	- Spring Security
+	- Quartz Scheduler
+	- Test Coverage
+	- etc.
+- Need to be careful with some plugins, they can lack quality/doc
+*- run: install-plugin spring-security-core
+*- run: grails s2-quickstart beerapp User Role
+*- Show domain classes created, config updated, login views, login controllers
+*- run app, show the security prompt from Api Controller
+*- Paste security config into Config.groovy:
+
+import grails.plugins.springsecurity.SecurityConfigType
+
+grails.plugins.springsecurity.password.algorithm = 'MD5'
+grails.plugins.springsecurity.dao.reflectionSaltSourceProperty = 'username'
+grails.plugins.springsecurity.securityConfigType = SecurityConfigType.InterceptUrlMap
+grails.plugins.springsecurity.interceptUrlMap = [
+    '/api/**':       ['ROLE_USER','IS_AUTHENTICATED_REMEMBERED'],
+    '/**':           ['IS_AUTHENTICATED_ANONYMOUSLY'],
+]
+
+*- add to BootStrap.groovy:
+
+            Role role = Role.findByAuthority('ROLE_USER')
+            if(!role) {
+                role = new Role(authority: 'ROLE_USER')
+                role.save()
+            }
+
+            User user = User.findByUsername('csmith')
+            if(!user) {
+                user = new User(username: 'csmith',
+                        password: springSecurityService.encodePassword('pass', 'csmith'),
+                        enabled: true)
+                user.save()
+            }
+
+            UserRole userRole = UserRole.findByUserAndRole(user, role)
+            if(!userRole) {
+                userRole = new UserRole(user: user, role: role)
+                userRole.save()
+            }
+*- restart app, show logon into Api Controller
+
+10. Testing
+- Setup for unit and integration tests
+- Integration tests will haul up all infrastructure for tests
+- Grails has built-in support for mocking Domains, Services, request parameters, etc.
+-* show where tests reside and how unit tests are automatically created 
